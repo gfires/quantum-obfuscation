@@ -72,6 +72,8 @@ def run_baseline_simulation(num_shots: int, gate):
     Args:
         num_shots (int): Number of shots for the simulation.
         gate (Gate): The gate block to insert.
+    Returns:
+        dict: Measurement counts from the baseline simulation.
     """
     qc = build_circuit_with_gate(num_qubits=10, gate=gate, start_index=3)
     counts_baseline = simulate_circuit(qc, shots=num_shots)
@@ -87,6 +89,15 @@ def run_obfuscation_simulation(
     gate,
     static: bool,
 ):
+    """
+    Run an obfuscation simulation with random circuits before and after the gate block.
+    Args:
+        num_shots (int): Total number of shots for the simulation.
+        obfuscation_interval (int): Number of shots per obfuscation trial.
+        gate (Gate): The gate block to insert.
+        static (bool): If True, use a fixed start index; if False, randomize it.
+    Returns:
+        dict: Measurement counts from the obfuscation simulation."""
     res = defaultdict(int)
     recovered_res = defaultdict(int)
     num_trials = num_shots // obfuscation_interval
@@ -145,6 +156,12 @@ def total_variation_distance(counts: dict, baseline_counts: dict, num_shots: int
     """
     Calculate total variation distance between observed distribution and baseline.
     TVD = 0.5 * sum(|p(x) - q(x)|) for all possible outcomes.
+    Args:
+        counts (dict): Measurement counts from the observed distribution.
+        baseline_counts (dict): Measurement counts from the baseline distribution.
+        num_shots (int): Total number of shots.
+    Returns:
+        float: Total variation distance.
     """
     # Get all possible keys from both distributions
     all_keys = set(counts.keys()) | set(baseline_counts.keys())
@@ -162,6 +179,12 @@ def total_variation_distance(counts: dict, baseline_counts: dict, num_shots: int
 def dominant_state_percentile(counts: dict, num_shots: int, top_n: int = 2) -> float:
     """
     Calculate the percentage of shots in the top N most frequent states.
+    Args:
+        counts (dict): Measurement counts.
+        num_shots (int): Total number of shots.
+        top_n (int): Number of top states to consider.
+    Returns:
+        float: Percentage of shots in the top N states.
     """
     sorted_counts = sorted(counts.values(), reverse=True)
     top_counts = sum(sorted_counts[:top_n])
@@ -172,6 +195,11 @@ def analyze_results(baseline: dict, static_obf: dict, dynamic_obf: dict, num_sho
     """
     Analyze and plot results from the three experiments.
     Generates bar charts for TVD and dominant state percentile, plus overlaid PDF.
+    Args:
+        baseline (dict): Counts from baseline simulation.
+        static_obf (dict): Counts from static obfuscation simulation.
+        dynamic_obf (dict): Counts from dynamic obfuscation simulation.
+        num_shots (int): Number of shots used in each simulation.
     """
     experiments = ['Baseline', 'Static', 'Dynamic']
 
