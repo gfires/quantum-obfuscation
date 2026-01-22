@@ -1,11 +1,10 @@
 from qiskit import QuantumCircuit, transpile
 from qiskit.qasm2 import loads
 from qiskit_aer import AerSimulator
-import matplotlib.pyplot as plt
-import numpy as np
-import random
-from collections import defaultdict
 from qiskit.circuit.random import random_circuit
+from collections import defaultdict
+import matplotlib.pyplot as plt
+import random
 
 
 def load_ghz_gate(qasm_path: str):
@@ -21,25 +20,35 @@ def load_ghz_gate(qasm_path: str):
     return ghz_gate
 
 
-def build_circuit_with_gate(num_qubits: int, gate, start_index: int = 0, measure: bool = True):
+def build_circuit_with_gate(
+    num_qubits: int,
+    gate,
+    start_index: int,
+    measure: bool = True
+) -> QuantumCircuit:
     """
     Build a quantum circuit with a specified gate block inserted at a given start index.
     Args:
         num_qubits (int): Total number of qubits in the circuit.
         gate (Gate): The gate block to insert.
-        start_index (int): The starting qubit index for the gate block.
-        measure (bool): Whether to add measurements on all qubits.
+        start_index (int): The starting qubit index to insert the gate block.
+        measure (bool): Whether to include measurements at the end.
     Returns:
         QuantumCircuit: The constructed quantum circuit.
     """
-    qc = QuantumCircuit(num_qubits, num_qubits)
-    # Determine which qubits the gate block goes on
+    if start_index < 0 or start_index + gate.num_qubits > num_qubits:
+        raise ValueError("Gate block does not fit within the circuit.")
+
+    # Allocate classical bits only if measuring
+    qc = QuantumCircuit(num_qubits, num_qubits if measure else 0)
+
+    # Build the circuit
     qubits = list(range(start_index, start_index + gate.num_qubits))
-    # Insert gate block
     qc.append(gate, qubits)
-    # Add measurements on all qubits if requested
+
     if measure:
         qc.measure(range(num_qubits), range(num_qubits))
+
     return qc
 
 
@@ -57,7 +66,7 @@ def simulate_circuit(qc, shots: int):
     return result.get_counts()
 
 
-def run_baseline_simulation(num_shots: int = 1000, gate = None):
+def run_baseline_simulation(num_shots: int, gate):
     """
     Run a baseline simulation with the gate block in a fixed position.
     Args:
@@ -66,41 +75,146 @@ def run_baseline_simulation(num_shots: int = 1000, gate = None):
     """
     qc = build_circuit_with_gate(num_qubits=10, gate=gate, start_index=3)
     counts_baseline = simulate_circuit(qc, shots=num_shots)
-    print(counts_baseline)
+    print("\n=== Baseline Counts ===")
+    for key in sorted(counts_baseline.keys()):
+        print(f"{key}: {counts_baseline[key]}")
     return counts_baseline
 
 
-def run_obfuscation_simulation(num_shots: int = 1000, obfuscation_interval: int = 10, gate = None, static: bool = False):
-    """
-    Run an obfuscation simulation with random circuits added before and after the gate block.
-    Args:
-        num_shots (int): Total number of shots for the simulation.
-        obfuscation_interval (int): Number of shots per obfuscation iteration.
-        gate (Gate): The gate block to insert.
-        static (bool): If True, use a fixed start index; if False, randomize start index each iteration.
-    """
+def run_obfuscation_simulation(
+    num_shots: int,
+    obfuscation_interval: int,
+    gate,
+    static: bool,
+):
     res = defaultdict(int)
-    for _ in range(0, num_shots, obfuscation_interval):
+    recovered_res = defaultdict(int)
+    num_trials = num_shots // obfuscation_interval
+
+    for _ in range(num_trials):
         start_idx = 3 if static else random.randint(0, 7)
-        # Build circuit without measurements first
-        qc = build_circuit_with_gate(num_qubits=10, gate=gate, start_index=start_idx, measure=False)
-        # Add random circuits on qubits before gate
-        if (start_idx > 0):
-            rand_top = random_circuit(start_idx, 4)
-            qc.append(rand_top, list(range(0, start_idx)))
-        # Add random circuits on qubits after gate
-        if (start_idx + gate.num_qubits < 10):
-            rand_bottom = random_circuit(10 - (start_idx + gate.num_qubits), 4)
-            qc.append(rand_bottom, list(range(start_idx + gate.num_qubits, 10)))
-        # Add measurements after all gates
-        qc.measure(range(10), range(10))
-        # Simulate and add counts to results
+
+        # Build circuit with gate at random/fixed position
+        qc = build_circuit_with_gate(
+            num_qubits=10,
+            gate=gate,
+            start_index=start_idx,
+            measure=False,
+        )
+
+        # Random circuit BEFORE gate
+        if start_idx > 0:
+            rand_top = random_circuit(
+                num_qubits=start_idx,
+                depth=4,
+                max_operands=2,
+            )
+            qc.compose(rand_top, qubits=list(range(start_idx)), inplace=True)
+
+        # Random circuit AFTER gate
+        end_idx = start_idx + gate.num_qubits
+        if end_idx < 10:
+            rand_bottom = random_circuit(
+                num_qubits=10 - end_idx,
+                depth=4,
+                max_operands=2,
+            )
+            qc.compose(rand_bottom, qubits=list(range(end_idx, 10)), inplace=True)
+
+        qc.measure_all()
         counts = simulate_circuit(qc, shots=obfuscation_interval)
-        for key in counts:
-            res[key] += counts[key]
-    final_counts = dict(res)
-    print(final_counts)
-    return final_counts
+
+        for outcome, count in counts.items():
+            res[outcome] += count
+
+            # Extract GHZ bits based on start index
+            bits = outcome[::-1]
+            ghz_bits = ''.join(
+                bits[start_idx + i] for i in range(gate.num_qubits)
+            )
+            recovered_res[ghz_bits] += count
+
+    print(f"\n=== {'Static' if static else 'Dynamic'} Obfuscation Recovered Counts ===")
+    for key in sorted(recovered_res):
+        print(f"{key}: {recovered_res[key]}")
+
+    return dict(res)
+
+
+def total_variation_distance(counts: dict, baseline_counts: dict, num_shots: int) -> float:
+    """
+    Calculate total variation distance between observed distribution and baseline.
+    TVD = 0.5 * sum(|p(x) - q(x)|) for all possible outcomes.
+    """
+    # Get all possible keys from both distributions
+    all_keys = set(counts.keys()) | set(baseline_counts.keys())
+
+    # Calculate TVD
+    tvd = 0.0
+    for key in all_keys:
+        p = counts.get(key, 0) / num_shots
+        q = baseline_counts.get(key, 0) / num_shots
+        tvd += abs(p - q)
+
+    return 0.5 * tvd
+
+
+def dominant_state_percentile(counts: dict, num_shots: int, top_n: int = 2) -> float:
+    """
+    Calculate the percentage of shots in the top N most frequent states.
+    """
+    sorted_counts = sorted(counts.values(), reverse=True)
+    top_counts = sum(sorted_counts[:top_n])
+    return (top_counts / num_shots) * 100
+
+
+def analyze_results(baseline: dict, static_obf: dict, dynamic_obf: dict, num_shots: int):
+    """
+    Analyze and plot results from the three experiments.
+    Generates bar charts for TVD and dominant state percentile, plus overlaid PDF.
+    """
+    experiments = ['Baseline', 'Static', 'Dynamic']
+
+    # Calculate metrics
+    tvd_values = [
+        0.0,  # Baseline vs itself
+        total_variation_distance(static_obf, baseline, num_shots),
+        total_variation_distance(dynamic_obf, baseline, num_shots)
+    ]
+
+    dominant_values = [
+        dominant_state_percentile(baseline, num_shots),
+        dominant_state_percentile(static_obf, num_shots),
+        dominant_state_percentile(dynamic_obf, num_shots)
+    ]
+
+    # Create figure with 2 subplots
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+
+    # Plot 1: TVD bar chart
+    tvd_labels = [f'{exp}: {val:.3f}' for exp, val in zip(experiments, tvd_values)]
+    axes[0].bar(tvd_labels, tvd_values, color=['green', 'orange', 'red'])
+    axes[0].set_ylabel('Total Variation Distance')
+    axes[0].set_title('TVD from Baseline Distribution')
+    axes[0].set_ylim(0, 1)
+
+    # Plot 2: Dominant state percentile bar chart
+    dom_labels = [f'{exp}: {val:.1f}%' for exp, val in zip(experiments, dominant_values)]
+    axes[1].bar(dom_labels, dominant_values, color=['green', 'orange', 'red'])
+    axes[1].set_ylabel('Percentage (%)')
+    axes[1].set_title('Top-2 Dominant States Percentile')
+    axes[1].set_ylim(0, 100)
+
+    plt.tight_layout()
+    plt.savefig('obfuscation_analysis.png', dpi=150)
+    plt.show()
+
+    # Print metrics
+    print("\n=== Analysis Results ===")
+    for i, exp in enumerate(experiments):
+        print(f"{exp}:")
+        print(f"  TVD from baseline: {tvd_values[i]:.4f}")
+        print(f"  Top-2 dominant states: {dominant_values[i]:.2f}%")
 
 
 # ------------------------------------------------------------------
@@ -108,7 +222,10 @@ def run_obfuscation_simulation(num_shots: int = 1000, obfuscation_interval: int 
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     ghz_gate = load_ghz_gate("ghz_indep_qiskit_3.qasm")
-    run_baseline_simulation(num_shots=1000, gate=ghz_gate)
-    run_obfuscation_simulation(num_shots=1000, obfuscation_interval=10, gate=ghz_gate, static=True)
-    run_obfuscation_simulation(num_shots=1000, obfuscation_interval=10, gate=ghz_gate, static=False)
-    
+
+    baseline = run_baseline_simulation(num_shots=5000, gate=ghz_gate)
+    static_obf = run_obfuscation_simulation(num_shots=5000, obfuscation_interval=10, gate=ghz_gate, static=True)
+    dynamic_obf = run_obfuscation_simulation(num_shots=5000, obfuscation_interval=10, gate=ghz_gate, static=False)
+
+    analyze_results(baseline, static_obf, dynamic_obf, 5000)
+
