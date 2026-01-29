@@ -6,7 +6,7 @@ from analyze import analyze_results
 # Main execution
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    NUM_SHOTS = 1000
+    NUM_SHOTS = 5000
 
     # Load gate blocks
     ghz_gate = load_gate("circuits/ghz_indep_qiskit_3.qasm")
@@ -43,8 +43,8 @@ if __name__ == "__main__":
         print(f"\n=== Running simulations for gate: {name} ===")
         print(gate)
         baseline = run_baseline_simulation(num_shots=NUM_SHOTS, gate=gate)
-        static_obf = run_obfuscation_simulation(num_shots=NUM_SHOTS, obfuscation_interval=10, gate=gate, static=True)
-        dynamic_obf = run_obfuscation_simulation(num_shots=NUM_SHOTS, obfuscation_interval=10, gate=gate, static=False)
+        static_obf, static_recovered = run_obfuscation_simulation(num_shots=NUM_SHOTS, obfuscation_interval=10, gate=gate, static=True)
+        dynamic_obf, dynamic_recovered = run_obfuscation_simulation(num_shots=NUM_SHOTS, obfuscation_interval=10, gate=gate, static=False)
 
-        analyze_results(expected_distributions[name], baseline, static_obf, dynamic_obf, NUM_SHOTS)
+        analyze_results(name, expected_distributions[name], baseline, static_obf, static_recovered, dynamic_obf, dynamic_recovered, NUM_SHOTS)
 

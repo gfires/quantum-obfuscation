@@ -89,39 +89,59 @@ def run_obfuscation_simulation(
     recovered_res = defaultdict(int)
     num_trials = num_shots // obfuscation_interval
 
-    for _ in range(num_trials):
-        start_idx = 3 if static else random.randint(0, 7)
+    for trial_idx in range(num_trials):
+        # Retry mechanism for valid circuit generation (random generation will occasionally break transpiler)
+        max_retries = 10
 
-        # Build circuit with gate at random/fixed position
-        qc = build_circuit_with_gate(
-            num_qubits=10,
-            gate=gate,
-            start_index=start_idx,
-            measure=False,
-        )
+        for attempt in range(max_retries):
+            try:
+                start_idx = 3 if static else random.randint(0, 7)
 
-        # Random circuit BEFORE gate
-        if start_idx > 0:
-            rand_top = random_circuit(
-                num_qubits=start_idx,
-                depth=4,
-                max_operands=2,
-            )
-            qc.compose(rand_top, qubits=list(range(start_idx)), inplace=True)
+                # Build circuit with gate at random/fixed position
+                qc = build_circuit_with_gate(
+                    num_qubits=10,
+                    gate=gate,
+                    start_index=start_idx,
+                    measure=False,
+                )
 
-        # Random circuit AFTER gate
-        end_idx = start_idx + gate.num_qubits
-        if end_idx < 10:
-            rand_bottom = random_circuit(
-                num_qubits=10 - end_idx,
-                depth=4,
-                max_operands=2,
-            )
-            qc.compose(rand_bottom, qubits=list(range(end_idx, 10)), inplace=True)
+                # Random circuit BEFORE gate
+                if start_idx > 0:
+                    rand_top = random_circuit(
+                        num_qubits=start_idx,
+                        depth=4,
+                        max_operands=2,
+                    )
+                    qc.compose(rand_top, qubits=list(range(start_idx)), inplace=True)
 
-        qc.measure_all()
-        counts = simulate_circuit(qc, shots=obfuscation_interval)
+                # Random circuit AFTER gate
+                end_idx = start_idx + gate.num_qubits
+                if end_idx < 10:
+                    rand_bottom = random_circuit(
+                        num_qubits=10 - end_idx,
+                        depth=4,
+                        max_operands=2,
+                    )
+                    qc.compose(rand_bottom, qubits=list(range(end_idx, 10)), inplace=True)
 
+                qc.measure_all()
+                counts = simulate_circuit(qc, shots=obfuscation_interval)
+
+                # Success - break out of retry loop
+                break
+
+            except BaseException as e:
+                print(f"[DEBUG] Exception in trial {trial_idx + 1}, attempt {attempt + 1}: {type(e).__name__}")
+                print(f"[DEBUG] Error at: {str(e)[:150]}")
+                if attempt == max_retries - 1:
+                    print(f"\n[ERROR] Failed to generate valid circuit after {max_retries} attempts in trial {trial_idx + 1}")
+                    print(f"[ERROR] Final error details: {e}")
+                    raise
+                # Retry with new random circuit
+                print(f"[DEBUG] Retrying... (attempt {attempt + 2}/{max_retries})")
+                continue
+
+        # Process results after successful simulation
         for outcome, count in counts.items():
             res[outcome] += count
 
@@ -130,10 +150,10 @@ def run_obfuscation_simulation(
             result_bits = ''.join(
                 bits[start_idx + i] for i in range(gate.num_qubits)
             )
-            recovered_res[result_bits] += count
+            recovered_res['0000' + result_bits + '000'] += count
 
     print(f"\n=== {'Static' if static else 'Dynamic'} Obfuscation Recovered Counts ===")
     for key in sorted(recovered_res):
         print(f"{key}: {recovered_res[key]}")
 
-    return dict(res)
+    return (dict(res), dict(recovered_res))
