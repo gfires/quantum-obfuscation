@@ -125,12 +125,12 @@ def run_obfuscation_simulation(
         for outcome, count in counts.items():
             res[outcome] += count
 
-            # Extract GHZ bits based on start index
+            # Extract result bits based on start index
             bits = outcome[::-1]
-            ghz_bits = ''.join(
+            result_bits = ''.join(
                 bits[start_idx + i] for i in range(gate.num_qubits)
             )
-            recovered_res[ghz_bits] += count
+            recovered_res[result_bits] += count
 
     print(f"\n=== {'Static' if static else 'Dynamic'} Obfuscation Recovered Counts ===")
     for key in sorted(recovered_res):
